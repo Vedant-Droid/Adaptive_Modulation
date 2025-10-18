@@ -1,6 +1,6 @@
 # Adaptive Modulation for Reliable Wireless Links
 
-This project implements and evaluates an adaptive modulation scheme (BPSK, QPSK, 16-QAM) over an AWGN channel. [cite_start]The goal is to design a controller that selects the optimal modulation order based on the instantaneous Signal-to-Noise Ratio (SNR) to maximize throughput while maintaining a low Bit Error Rate (BER)[cite: 2, 4].
+This project implements and evaluates an adaptive modulation scheme (BPSK, QPSK, 16-QAM) over an AWGN channel. [cite_start]The goal is to design a controller that selects the optimal modulation order based on the instantaneous Signal-to-Noise Ratio (SNR) to maximize throughput while maintaining a low Bit Error Rate (BER)[cite: 2, 4]
 
 This simulation is written in Python 3.
 
