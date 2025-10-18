@@ -1,0 +1,5 @@
+Scheme,Average BER,Average Throughput (Mbps)
+Fixed BPSK,,
+Fixed QPSK,,
+Fixed 16-QAM,,
+Adaptive,0.501121,1.241034
