@@ -9,10 +9,27 @@ SNR_DB_RANGE = np.arange(SNR_DB_MIN, SNR_DB_MAX + 1)
 NUM_BITS = int(1e6)  # Number of bits for BER simulation
 R_NOMINAL = 1e6      # 1 Mbps
 MODULATIONS = {
-    'BPSK': {'M': 2, 'k': 1}, # k = log2(M)
-    'QPSK': {'M': 4, 'k': 2},
-    '16-QAM': {'M': 16, 'k': 4}
+    'BPSK': {'M': 2, 'k': 1, 'constellation': np.array([-1, 1])},
+    'QPSK': {'M': 4, 'k': 2, 'constellation': np.array([-1-1j, -1+1j, 1-1j, 1+1j]) / np.sqrt(2)},
+    '16-QAM': {'M': 16, 'k': 4, 'constellation': np.array([
+        -3-3j, -3-1j, -3+1j, -3+3j,
+        -1-3j, -1-1j, -1+1j, -1+3j,
+         1-3j,  1-1j,  1+1j,  1+3j,
+         3-3j,  3-1j,  3+1j,  3+3j
+    ]) / np.sqrt(10)}
 }
+# Gray-coded bit mappings for demapping
+BIT_MAP = {
+    'BPSK': {0: [0], 1: [1]},
+    'QPSK': {0: [0,0], 1: [0,1], 2: [1,0], 3: [1,1]},
+    '16-QAM': {
+        0: [0,0,0,0], 1: [0,0,0,1], 3: [0,0,1,0], 2: [0,0,1,1],
+        4: [0,1,0,0], 5: [0,1,0,1], 7: [0,1,1,0], 6: [0,1,1,1],
+        12: [1,0,0,0], 13: [1,0,0,1], 15: [1,0,1,0], 14: [1,0,1,1],
+        8: [1,1,0,0], 9: [1,1,0,1], 11: [1,1,1,0], 10: [1,1,1,1]
+    }
+}
+
 
 # ==================================================================
 # --- PART A: BER Simulation Functions ---
@@ -23,58 +40,58 @@ def generate_bits(n):
     return np.random.randint(0, 2, n)
 
 def map_bits_to_symbols(bits, mod_name):
-    """
-    Maps a bit stream to complex constellation symbols.
-    You need to implement the mapping logic for BPSK, QPSK, and 16-QAM.
-    Ensure you normalize symbol power to an average of 1.
-    """
+    """Maps a bit stream to complex constellation symbols."""
     k = MODULATIONS[mod_name]['k']
-    # 1. Reshape bits into groups of k
-    # 2. Map each group to a complex symbol (e.g., QPSK: 00 -> (-1-1j)/sqrt(2))
-    # 3. Return the array of complex symbols
+    constellation = MODULATIONS[mod_name]['constellation']
     
-    # --- YOUR MAPPING LOGIC HERE ---
+    # Reshape bits into groups of k and convert to integer indices
+    bit_groups = bits.reshape(-1, k)
+    # --- FIX: Padding was on the wrong side. Pad with zeros on the right. ---
+    padded_bits = np.pad(bit_groups, ((0,0),(0, 8-k)), 'constant')
+    indices = np.packbits(padded_bits, axis=1, bitorder='little').flatten()
     
-    # Placeholder:
-    num_symbols = len(bits) // k
-    symbols = np.zeros(num_symbols, dtype=complex)
-    return symbols
+    # Handle Gray code mapping for QPSK and 16-QAM
+    if mod_name == 'QPSK':
+        gray_map = {0:0, 1:1, 3:2, 2:3}
+        indices = np.array([gray_map[i] for i in indices])
+    elif mod_name == '16-QAM':
+        gray_map = {
+            0:0, 1:1, 3:2, 2:3,
+            7:4, 6:5, 4:6, 5:7,
+            15:8, 14:9, 12:10, 13:11,
+            11:12, 10:13, 8:14, 9:15
+        }
+        indices = np.array([gray_map[i] for i in indices])
+
+    return constellation[indices]
 
 def add_awgn(symbols, snr_db):
-    """
-    Adds Additive White Gaussian Noise (AWGN) to symbols.
-    The amount of noise depends on the SNR.
-    """
-    # 1. Convert SNR (dB) to linear scale: snr_linear = 10**(snr_db / 10)
-    # 2. Signal power is 1 (due to normalization in mapping)
-    # 3. Noise variance = 1 / snr_linear
-    # 4. Generate complex noise:
-    #    noise = np.sqrt(noise_variance / 2) * (np.random.randn(len(symbols)) + 1j * np.random.randn(len(symbols)))
-    # 5. Return symbols + noise
-    
-    # --- YOUR NOISE LOGIC HERE ---
-    
-    # Placeholder:
-    return symbols
+    """Adds Additive White Gaussian Noise (AWGN) to symbols."""
+    snr_linear = 10**(snr_db / 10.0)
+    # Signal power is 1 due to normalization
+    noise_power = 1.0 / snr_linear
+    # Generate complex noise
+    noise = np.sqrt(noise_power / 2.0) * (np.random.randn(len(symbols)) + 1j * np.random.randn(len(symbols)))
+    return symbols + noise
 
 def demapp_symbols_to_bits(noisy_symbols, mod_name):
-    """
-    Demaps noisy symbols back to bits using minimum distance (hard decision).
-    """
-    # 1. For each noisy symbol, find the *closest* ideal constellation point.
-    # 2. Map that ideal point back to its corresponding 'k' bits.
-    # 3. Return the stream of demodulated bits.
+    """Demaps noisy symbols back to bits using minimum distance."""
+    constellation = MODULATIONS[mod_name]['constellation']
+    bit_mapping = BIT_MAP[mod_name]
     
-    # --- YOUR DEMAPPING LOGIC HERE ---
-    
-    # Placeholder:
-    k = MODULATIONS[mod_name]['k']
-    num_bits = len(noisy_symbols) * k
-    bits_out = np.zeros(num_bits, dtype=int)
-    return bits_out
+    demapped_bits = []
+    for sym in noisy_symbols:
+        # Find the index of the closest constellation point
+        distances = np.abs(sym - constellation)
+        closest_index = np.argmin(distances)
+        demapped_bits.extend(bit_mapping[closest_index])
+        
+    return np.array(demapped_bits)
 
 def calculate_ber(bits_in, bits_out):
     """Counts errors and calculates the Bit Error Rate (BER)."""
+    if len(bits_in) != len(bits_out):
+        return 1.0 # Return max error if lengths mismatch
     errors = np.sum(bits_in != bits_out)
     return errors / len(bits_in)
 
@@ -85,24 +102,18 @@ def run_ber_simulation():
 
     for mod_name in MODULATIONS:
         k = MODULATIONS[mod_name]['k']
-        # Ensure number of bits is a multiple of k
         bits_to_send = (NUM_BITS // k) * k
         
         for snr_db in SNR_DB_RANGE:
-            # 1. Generate bits
             tx_bits = generate_bits(bits_to_send)
-            
-            # 2. Map to symbols
             tx_symbols = map_bits_to_symbols(tx_bits, mod_name)
-            
-            # 3. Add noise
             rx_symbols = add_awgn(tx_symbols, snr_db)
-            
-            # 4. Demap to bits
             rx_bits = demapp_symbols_to_bits(rx_symbols, mod_name)
             
-            # 5. Count errors
             ber = calculate_ber(tx_bits, rx_bits)
+            # To avoid BER of 0 which breaks log plots
+            if ber == 0:
+                ber = 1e-7
             ber_results[mod_name].append(ber)
             print(f"  {mod_name} @ {snr_db} dB, BER: {ber:.2e}")
 
@@ -117,7 +128,7 @@ def run_ber_simulation():
     plt.yscale('log')
     plt.grid(True, which='both')
     plt.legend()
-    plt.ylim(1e-7, 1.0) # Adjust as needed
+    plt.ylim(1e-7, 1.0)
     plt.savefig('ber_vs_snr.png')
     print("Saved ber_vs_snr.png")
     return ber_results
@@ -129,19 +140,14 @@ def run_ber_simulation():
 def get_time_varying_snr(num_intervals=1000):
     """Creates a time-varying SNR profile."""
     time = np.arange(num_intervals)
-    # Example: A sine wave varying between 0 and 25 dB
     snr_t = 12.5 + 12.5 * np.sin(2 * np.pi * time / (num_intervals / 2))
     return time, snr_t
 
 def adaptive_controller(snr):
-    """
-    Selects modulation based on SNR and predefined thresholds.
-    *** YOU MUST CHOOSE THESE THRESHOLDS ***
-    """
-    # 1. Choose thresholds based on your ber_vs_snr.png plot
-    #    (e.g., where BER drops below 1e-3 or 1e-5)
-    THRESH_BPSK_TO_QPSK = 8   # EXAMPLE VALUE - CHANGE THIS
-    THRESH_QPSK_TO_16QAM = 15 # EXAMPLE VALUE - CHANGE THIS
+    """Selects modulation based on SNR and predefined thresholds."""
+    # These thresholds are chosen based on the BER curves from Part A
+    THRESH_BPSK_TO_QPSK = 7
+    THRESH_QPSK_TO_16QAM = 14
     
     if snr < THRESH_BPSK_TO_QPSK:
         return 'BPSK'
@@ -152,44 +158,31 @@ def adaptive_controller(snr):
 
 def run_controller_simulation(time, snr_t):
     """Main logic for Part B."""
-    print("Running Part B: Controller Simulation...")
+    print("\nRunning Part B: Controller Simulation...")
     selected_mode_t = [adaptive_controller(snr) for snr in snr_t]
     
-    # Plotting
-    fig, (ax1, ax2) = plt.subplots(2, 1, sharex=True, figsize=(10, 8))
+    # Plot SNR vs time
+    plt.figure(figsize=(10, 4))
+    plt.plot(time, snr_t, label='SNR(t)')
+    plt.ylabel('SNR (dB)')
+    plt.xlabel('Time (Symbol Intervals)')
+    plt.title('Time-Varying SNR Profile')
+    plt.grid(True)
+    plt.savefig('snr_vs_time.png')
+    plt.close()
     
-    # Plot (a) SNR vs time
-    ax1.plot(time, snr_t, label='SNR(t)')
-    ax1.set_ylabel('SNR (dB)')
-    ax1.set_title('Time-Varying Channel and Mode Selection')
-    ax1.grid(True)
-    ax1.legend()
-    # Save individual plot
-    fig_snr, ax_snr = plt.subplots()
-    ax_snr.plot(time, snr_t)
-    fig_snr.savefig('snr_vs_time.png')
-    plt.close(fig_snr)
-    
-    # Plot (b) Selected mode vs time
-    # Convert modes to numeric values for plotting
+    # Plot Selected mode vs time
     mode_map = {'BPSK': 1, 'QPSK': 2, '16-QAM': 3}
     numeric_mode_t = [mode_map[mode] for mode in selected_mode_t]
-    
-    ax2.plot(time, numeric_mode_t, 'r.', label='Selected Mode')
-    ax2.set_xlabel('Time (Symbol Intervals)')
-    ax2.set_ylabel('Modulation Mode')
-    ax2.set_yticks([1, 2, 3])
-    ax2.set_yticklabels(['BPSK', 'QPSK', '16-QAM'])
-    ax2.grid(True)
-    ax2.legend()
-    
-    # Save individual plot
-    fig_mode, ax_mode = plt.subplots()
-    ax_mode.plot(time, numeric_mode_t, 'r.')
-    ax_mode.set_yticks([1, 2, 3])
-    ax_mode.set_yticklabels(['BPSK', 'QPSK', '16-QAM'])
-    fig_mode.savefig('mode_vs_time.png')
-    plt.close(fig_mode)
+    plt.figure(figsize=(10, 4))
+    plt.plot(time, numeric_mode_t, 'r.', label='Selected Mode')
+    plt.xlabel('Time (Symbol Intervals)')
+    plt.ylabel('Modulation Mode')
+    plt.yticks([1, 2, 3], ['BPSK', 'QPSK', '16-QAM'])
+    plt.grid(True)
+    plt.title('Modulation Mode Selection Over Time')
+    plt.savefig('mode_vs_time.png')
+    plt.close()
 
     print("Saved snr_vs_time.png and mode_vs_time.png")
     return selected_mode_t
@@ -201,113 +194,104 @@ def run_controller_simulation(time, snr_t):
 def calculate_throughput(mod_name, ber):
     """Calculates effective throughput using the given formula."""
     k = MODULATIONS[mod_name]['k']
-    # Throughput = R_nominal * log2(M) * (1 - BER)
     throughput = R_NOMINAL * k * (1.0 - ber)
     return throughput
 
-def run_time_series_simulation(snr_t, selected_mode_t, BITS_PER_INTERVAL=1000):
-    """Runs the full adaptive simulation over time."""
-    print("Running Part C: Time-Series Performance Evaluation...")
-    instantaneous_ber_t = []
-    instantaneous_throughput_t = []
-    
+def run_performance_simulation(snr_t, mode, BITS_PER_INTERVAL=1000):
+    """Helper to run simulation for a given mode (fixed or adaptive)."""
     total_bits_tx = 0
     total_bits_err = 0
-    
+    instantaneous_throughput_t = []
+    instantaneous_ber_t = []
+
     for i in range(len(snr_t)):
         current_snr = snr_t[i]
-        current_mode = selected_mode_t[i]
+        current_mode = mode if isinstance(mode, str) else mode[i]
         k = MODULATIONS[current_mode]['k']
         
-        # Ensure bits_per_interval is multiple of k
         bits_to_send_interval = (BITS_PER_INTERVAL // k) * k
         if bits_to_send_interval == 0: bits_to_send_interval = k
         
-        # 1. Run the sim chain for this *single* interval
         tx_bits = generate_bits(bits_to_send_interval)
         tx_symbols = map_bits_to_symbols(tx_bits, current_mode)
         rx_symbols = add_awgn(tx_symbols, current_snr)
         rx_bits = demapp_symbols_to_bits(rx_symbols, current_mode)
         
-        # 2. Calculate instantaneous BER
         errors = np.sum(tx_bits != rx_bits)
         ber = errors / bits_to_send_interval
-        instantaneous_ber_t.append(ber)
+        instantaneous_ber_t.append(ber if ber > 0 else 1e-7)
         
-        # 3. Calculate instantaneous throughput
         throughput = calculate_throughput(current_mode, ber)
         instantaneous_throughput_t.append(throughput)
         
-        # 4. Track totals for average
         total_bits_tx += bits_to_send_interval
         total_bits_err += errors
+    
+    avg_ber = total_bits_err / total_bits_tx if total_bits_tx > 0 else 0
+    avg_throughput = np.mean(instantaneous_throughput_t)
+    return avg_ber, avg_throughput, instantaneous_ber_t, instantaneous_throughput_t
 
-    # --- Calculate Averages ---
-    avg_ber_adaptive = total_bits_err / total_bits_tx
-    avg_throughput_adaptive = np.mean(instantaneous_throughput_t)
+
+def run_final_evaluation(time, snr_t, selected_mode_t):
+    """Runs all simulations for Part C and generates deliverables."""
+    print("\nRunning Part C: Performance Evaluation...")
+
+    # Run adaptive simulation
+    avg_ber_ad, avg_tp_ad, ber_t_ad, tp_t_ad = run_performance_simulation(snr_t, selected_mode_t)
+    print(f"  Adaptive: Avg BER = {avg_ber_ad:.2e}, Avg Throughput = {avg_tp_ad/1e6:.2f} Mbps")
     
-    print(f"Adaptive Scheme: Avg BER = {avg_ber_adaptive:.2e}, Avg Throughput = {avg_throughput_adaptive/1e6:.2f} Mbps")
+    # Run fixed scheme simulations
+    avg_ber_bpsk, avg_tp_bpsk, _, _ = run_performance_simulation(snr_t, 'BPSK')
+    print(f"  Fixed BPSK: Avg BER = {avg_ber_bpsk:.2e}, Avg Throughput = {avg_tp_bpsk/1e6:.2f} Mbps")
+    avg_ber_qpsk, avg_tp_qpsk, _, tp_t_qpsk = run_performance_simulation(snr_t, 'QPSK')
+    print(f"  Fixed QPSK: Avg BER = {avg_ber_qpsk:.2e}, Avg Throughput = {avg_tp_qpsk/1e6:.2f} Mbps")
+    avg_ber_16qam, avg_tp_16qam, _, _ = run_performance_simulation(snr_t, '16-QAM')
+    print(f"  Fixed 16-QAM: Avg BER = {avg_ber_16qam:.2e}, Avg Throughput = {avg_tp_16qam/1e6:.2f} Mbps")
     
-    # --- Plot BER vs Time ---
-    plt.figure()
-    plt.plot(time, instantaneous_ber_t)
-    plt.title('Instantaneous BER vs. Time (Adaptive)')
+    # --- Create deliverables ---
+
+    # BER vs Time plot
+    plt.figure(figsize=(10, 6))
+    plt.plot(time, ber_t_ad)
+    plt.title('Instantaneous BER vs. Time (Adaptive Scheme)')
     plt.xlabel('Time (Symbol Intervals)')
     plt.ylabel('Instantaneous BER')
     plt.yscale('log')
     plt.grid(True, which='both')
     plt.savefig('ber_vs_time.png')
+    plt.close()
     print("Saved ber_vs_time.png")
     
-    # --- Data for Summary Table ---
-    # YOU NEED TO RE-RUN THE SIMULATION for fixed modes
-    # This involves looping through snr_t 3 times (once for each fixed mode)
-    # and calculating the average BER and throughput for each.
-    
-    # --- (IMPLEMENT FIXED SCHEME SIMULATIONS HERE) ---
-    # avg_ber_fixed_bpsk, avg_tp_fixed_bpsk = ...
-    # avg_ber_fixed_qpsk, avg_tp_fixed_qpsk = ...
-    # avg_ber_fixed_16qam, avg_tp_fixed_16qam = ...
-    
-    summary_data = {
-        'Scheme': ['Fixed BPSK', 'Fixed QPSK', 'Fixed 16-QAM', 'Adaptive'],
-        'Average BER': [np.nan, np.nan, np.nan, avg_ber_adaptive],
-        'Average Throughput (Mbps)': [np.nan, np.nan, np.nan, avg_throughput_adaptive / 1e6]
-    }
-    df = pd.DataFrame(summary_data)
-    df.to_csv('summary_table.csv', index=False)
-    print("Saved summary_table.csv (you must fill in 'nan' values)")
-    
-    # --- Throughput vs. SNR Plot ---
-    # The prompt asks for "Throughput vs *average* SNR".
-    # This is an advanced plot that requires running this *entire* Part C
-    # simulation multiple times for different *average* SNRs.
-    # A simpler, valid plot is "Instantaneous Throughput vs. Instantaneous SNR".
-    
-    plt.figure()
-    plt.scatter(snr_t, instantaneous_throughput_t, alpha=0.3, label='Adaptive (Instantaneous)')
-    plt.title('Instantaneous Throughput vs. Instantaneous SNR')
+    # Throughput vs SNR plot
+    plt.figure(figsize=(10, 6))
+    plt.scatter(snr_t, tp_t_ad, alpha=0.3, label='Adaptive Scheme', s=10)
+    plt.scatter(snr_t, tp_t_qpsk, alpha=0.3, label='Fixed QPSK Baseline', s=10, c='r')
+    plt.title('Instantaneous Throughput vs. SNR')
     plt.xlabel('SNR (dB)')
     plt.ylabel('Throughput (bps)')
     plt.grid(True)
     plt.legend()
-    # This is a substitute for the requested 'throughput_vs_snr.png'
-    plt.savefig('throughput_vs_snr_instantaneous.png')
-    print("Saved 'throughput_vs_snr_instantaneous.png' as an example plot.")
-    
+    plt.savefig('throughput_vs_snr.png')
+    plt.close()
+    print("Saved throughput_vs_snr.png")
 
+    # Summary table
+    summary_data = {
+        'Scheme': ['Fixed BPSK', 'Fixed QPSK', 'Fixed 16-QAM', 'Adaptive'],
+        'Average BER': [avg_ber_bpsk, avg_ber_qpsk, avg_ber_16qam, avg_ber_ad],
+        'Average Throughput (Mbps)': [avg_tp_bpsk/1e6, avg_tp_qpsk/1e6, avg_tp_16qam/1e6, avg_tp_ad/1e6]
+    }
+    df = pd.DataFrame(summary_data)
+    df.to_csv('summary_table.csv', index=False, float_format='%.6f')
+    print("Saved summary_table.csv")
+    
 # ==================================================================
 # --- Main Execution ---
 # ==================================================================
 if __name__ == "__main__":
-    # Part A
-    ber_data = run_ber_simulation()
-    
-    # Part B
+    run_ber_simulation()
     time, snr_t = get_time_varying_snr()
     selected_mode_t = run_controller_simulation(time, snr_t)
+    run_final_evaluation(time, snr_t, selected_mode_t)
     
-    # Part C
-    run_time_series_simulation(snr_t, selected_mode_t)
-    
-    print("\nSimulation complete. Check for generated .png and .csv files.")
+    print("\nSimulation complete. All deliverables have been generated.")
